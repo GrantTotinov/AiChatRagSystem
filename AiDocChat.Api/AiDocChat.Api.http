@@ -1,0 +1,6 @@
+@AiDocChat.Api_HostAddress = http://localhost:5261
+
+GET {{AiDocChat.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
