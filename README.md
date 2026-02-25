@@ -31,6 +31,9 @@ Upload PDF or TXT documents and start chatting with your data instantly:
 - ⚡ **Real-time Processing** - Fast document chunking and embedding generation
 - 🎨 **Modern UI** - Beautiful glassmorphism design with smooth animations
 
+![firefox_TiQCHFmn7A](https://github.com/user-attachments/assets/49d88860-beb2-4cbc-bb31-93eb7293f8e7)
+
+
 ---
 
 ## ✨ Features
