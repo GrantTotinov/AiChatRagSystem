@@ -1,6 +1,21 @@
-@AiDocChat.Api_HostAddress = http://localhost:5261
+@api = http://localhost:5261/api
 
-GET {{AiDocChat.Api_HostAddress}}/weatherforecast/
-Accept: application/json
+GET {{api}}/health
 
 ###
+
+GET {{api}}/documents
+
+###
+
+POST {{api}}/chat
+Content-Type: application/json
+
+{
+  "question": "What is this document about?",
+  "overview": true
+}
+
+###
+
+GET {{api}}/conversations

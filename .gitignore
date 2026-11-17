@@ -1,3 +1,20 @@
+# .NET
+bin/
+obj/
+AiDocChat.Api/App_Data/
+AiDocChat.Api/wwwroot/
 AiDocChat.Api/appsettings.Development.json
-AiDocChat.Api/bin/
-AiDocChat.Api/obj/
+AiDocChat.Api/appsettings.Local.json
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+node_modules/
+dist/
+
+# Tooling
+.vs/
+.idea/
+.claude/
+TestResults/
