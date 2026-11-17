@@ -40,7 +40,8 @@ public sealed class EmbeddingClient(HttpClient http, IOptions<EmbeddingOptions> 
     public async Task<string> StatusAsync(CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        // Generous: a busy Ollama on a CPU can take a few seconds to answer even this.
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
         {
             var tags = await http.GetFromJsonAsync<TagsResponse>(Url("/api/tags"), timeout.Token);
