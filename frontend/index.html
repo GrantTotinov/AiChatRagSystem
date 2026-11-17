@@ -2,9 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta name="description" content="Ask questions about your documents and get answers that cite the exact passage." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>AI Doc Chat</title>
+    <script>
+      // Set the theme before first paint so dark mode does not flash white.
+      try {
+        var saved = localStorage.getItem('aidocchat.theme')
+      } catch (e) {}
+      document.documentElement.dataset.theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    </script>
   </head>
   <body>
     <div id="root"></div>

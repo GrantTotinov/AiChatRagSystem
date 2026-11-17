@@ -1,134 +1,109 @@
-using System.Text;
-using iText.Kernel.Pdf;
-using iText.Kernel.Pdf.Canvas.Parser;
-using iText.Kernel.Pdf.Canvas.Parser.Listener;
-using Newtonsoft.Json;
-using AiDocChat.Api.Models;
+using System.Security.Cryptography;
 using AiDocChat.Api.Data;
+using AiDocChat.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using UploadGuard;
 
 namespace AiDocChat.Api.Services;
 
-public interface IDocumentService
+public sealed class DocumentService(
+    AppDbContext db,
+    UploadPipeline uploads,
+    EmbeddingClient embeddings,
+    Retriever retriever,
+    IOptions<RagOptions> options,
+    ILogger<DocumentService> logger)
 {
-    Task<string> ProcessDocumentAsync(IFormFile file);
-    Task<List<Document>> GetAllDocumentsAsync();
-}
+    public const string UploadPolicy = "documents";
 
-public class DocumentService : IDocumentService
-{
-    private readonly AppDbContext _context;
-    private readonly IEmbeddingService _embeddingService;
-    
-    public DocumentService(AppDbContext context, IEmbeddingService embeddingService)
+    private readonly RagOptions _options = options.Value;
+
+    public Task<List<DocumentDto>> ListAsync(CancellationToken ct) =>
+        db.Documents.OrderByDescending(d => d.UploadedAt)
+            .Select(d => new DocumentDto(d.Id, d.FileName, d.Kind, d.SizeBytes, d.Pages, d.Words, d.ChunksCount, d.Embedded, d.UploadedAt))
+            .ToListAsync(ct);
+
+    public async Task<UploadOutcome> IngestAsync(IFormFile file, CancellationToken ct)
     {
-        _context = context;
-        _embeddingService = embeddingService;
-    }
-    
-    public async Task<string> ProcessDocumentAsync(IFormFile file)
-    {
-        // Извличане на текст според типа файл
-        string text = await ExtractTextFromFileAsync(file);
-        
-        // Разделяне на chunks
-        var chunks = SplitIntoChunks(text, 250);
-        
-        // Създаване на документ
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!TextExtractor.Extensions.Contains(extension))
+        {
+            return Fail(file, "This file type is not supported. Upload a PDF, Word (.docx), text, Markdown, CSV or JSON file.");
+        }
+
+        await using var content = new MemoryStream();
+        await file.CopyToAsync(content, ct);
+
+        // UploadGuard detects types from the bytes. It knows .txt and .csv but not .md or .json, which are checked as plain text.
+        var checkedAsText = extension is not (".pdf" or ".docx" or ".txt" or ".csv");
+        content.Position = 0;
+        var check = await uploads.ValidateAsync(
+            content,
+            checkedAsText ? Path.ChangeExtension(file.FileName, ".txt") : file.FileName,
+            checkedAsText ? null : file.ContentType,
+            UploadPolicy,
+            ct);
+        if (!check.IsValid) return Fail(file, check.Error!.Message);
+
+        content.Position = 0;
+        var sha256 = Convert.ToHexString(SHA256.HashData(content));
+        if (await db.Documents.FirstOrDefaultAsync(d => d.Sha256 == sha256, ct) is { } existing)
+        {
+            return new(file.FileName, existing.ToDto(), null, Duplicate: true);
+        }
+
+        List<Page> pages;
+        try
+        {
+            content.Position = 0;
+            pages = TextExtractor.Extract(content, extension);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not read {FileName}", file.FileName);
+            return Fail(file, "The file could not be read. It may be damaged or password-protected.");
+        }
+
+        var chunks = TextChunker.Split(pages, _options.ChunkWords, _options.OverlapWords);
+        if (chunks.Count == 0)
+        {
+            return Fail(file, "No text was found in this file. Scanned PDFs need OCR before they can be searched.");
+        }
+
+        var vectors = await embeddings.EmbedAsync([.. chunks.Select(c => c.Text)], isQuery: false, ct);
         var document = new Document
         {
-            Id = Guid.NewGuid().ToString(),
-            FileName = file.FileName,
-            UploadedAt = DateTime.UtcNow,
-            ChunksCount = chunks.Count
+            FileName = Path.GetFileName(file.FileName),
+            Kind = extension == ".markdown" ? "md" : extension.TrimStart('.'),
+            Sha256 = sha256,
+            SizeBytes = file.Length,
+            Pages = extension == ".pdf" ? pages.Count : null,
+            Words = pages.Sum(p => TextChunker.CountWords(p.Text)),
+            ChunksCount = chunks.Count,
+            Embedded = vectors is not null,
         };
-        
-        // Генериране на embeddings за всеки chunk
-        for (int i = 0; i < chunks.Count; i++)
+        document.Chunks.AddRange(chunks.Select((c, i) => new DocumentChunk
         {
-            var embedding = await _embeddingService.GenerateEmbeddingAsync(chunks[i]);
-            
-            var chunk = new DocumentChunk
-            {
-                DocumentId = document.Id,
-                ChunkIndex = i,
-                Text = chunks[i],
-                EmbeddingJson = JsonConvert.SerializeObject(embedding)
-            };
-            
-            document.Chunks.Add(chunk);
-        }
-        
-        // Запис в базата
-        _context.Documents.Add(document);
-        await _context.SaveChangesAsync();
-        
-        return document.Id;
+            DocumentId = document.Id,
+            Index = i,
+            Page = c.Page,
+            Text = c.Text,
+            Vector = vectors is null ? null : EmbeddingClient.ToBytes(vectors[i]),
+        }));
+
+        db.Documents.Add(document);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Indexed {FileName}: {Chunks} chunks, embeddings {Embedded}", document.FileName, chunks.Count, document.Embedded);
+        return new(file.FileName, document.ToDto(), null);
     }
-    
-    public async Task<List<Document>> GetAllDocumentsAsync()
+
+    public async Task<bool> DeleteAsync(string id, CancellationToken ct)
     {
-        return await _context.Documents
-            .OrderByDescending(d => d.UploadedAt)
-            .ToListAsync();
+        var deleted = await db.Documents.Where(d => d.Id == id).ExecuteDeleteAsync(ct) > 0;
+        retriever.Forget(id);
+        return deleted;
     }
-    
-    private async Task<string> ExtractTextFromFileAsync(IFormFile file)
-    {
-        using var stream = new MemoryStream();
-        await file.CopyToAsync(stream);
-        stream.Position = 0;
-        
-        var extension = Path.GetExtension(file.FileName).ToLower();
-        
-        return extension switch
-        {
-            ".pdf" => ExtractTextFromPdf(stream),
-            ".txt" => await ExtractTextFromTxtAsync(stream),
-            _ => throw new NotSupportedException($"Файлов тип {extension} не се поддържа")
-        };
-    }
-    
-    private string ExtractTextFromPdf(Stream stream)
-    {
-        var text = new StringBuilder();
-        
-        using var pdfReader = new PdfReader(stream);
-        using var pdfDoc = new PdfDocument(pdfReader);
-        
-        for (int i = 1; i <= pdfDoc.GetNumberOfPages(); i++)
-        {
-            var page = pdfDoc.GetPage(i);
-            var strategy = new LocationTextExtractionStrategy();
-            var pageText = PdfTextExtractor.GetTextFromPage(page, strategy);
-            text.AppendLine(pageText);
-        }
-        
-        return text.ToString();
-    }
-    
-    private async Task<string> ExtractTextFromTxtAsync(Stream stream)
-    {
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        return await reader.ReadToEndAsync();
-    }
-    
-    private List<string> SplitIntoChunks(string text, int chunkSize)
-    {
-        var words = text.Split(new[] { ' ', '\n', '\r', '\t' }, 
-            StringSplitOptions.RemoveEmptyEntries);
-        
-        var chunks = new List<string>();
-        
-        for (int i = 0; i < words.Length; i += chunkSize)
-        {
-            var chunk = string.Join(" ", words.Skip(i).Take(chunkSize));
-            if (!string.IsNullOrWhiteSpace(chunk))
-            {
-                chunks.Add(chunk);
-            }
-        }
-        
-        return chunks;
-    }
+
+    private static UploadOutcome Fail(IFormFile file, string error) => new(file.FileName, null, error);
 }
