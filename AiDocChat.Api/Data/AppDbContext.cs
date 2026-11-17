@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AiDocChat.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace AiDocChat.Api.Data;
@@ -23,7 +24,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
         b.Entity<ChatMessage>().Property(m => m.Sources).HasConversion(
             v => v == null ? null : JsonSerializer.Serialize(v, JsonSerializerOptions.Web),
-            v => v == null ? null : JsonSerializer.Deserialize<List<Source>>(v, JsonSerializerOptions.Web));
+            v => v == null ? null : JsonSerializer.Deserialize<List<Source>>(v, JsonSerializerOptions.Web),
+            new ValueComparer<List<Source>?>(
+                (a, b) => a == null ? b == null : b != null && a.SequenceEqual(b),
+                v => v == null ? 0 : v.Count,
+                v => v == null ? null : v.ToList()));
     }
 
     // SQLite drops DateTime.Kind; everything is stored as UTC, so read it back as UTC.

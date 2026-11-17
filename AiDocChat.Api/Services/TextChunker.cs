@@ -56,6 +56,7 @@ public static partial class TextChunker
     private static IEnumerable<Unit> Units(string text, int maxWords, bool hardLineBreaks)
     {
         text = Hyphenation().Replace(text.Replace("\r\n", "\n"), "$1$2");
+        if (!hardLineBreaks) text = MarkHeadings(text);
         foreach (var paragraph in BlankLine().Split(text))
         {
             var separator = "\n\n";
@@ -75,6 +76,27 @@ public static partial class TextChunker
                 if (separator == " ") separator = "\n";
             }
         }
+    }
+
+    // PDF text has no paragraph marks. A short line without end punctuation, followed by a capitalised line, is a heading:
+    // give it its own paragraph so it is not glued to the sentence after it.
+    private static string MarkHeadings(string text)
+    {
+        var lines = text.Split('\n');
+        var result = new StringBuilder(text.Length + 64);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            result.Append(line);
+            if (i == lines.Length - 1) break;
+
+            var next = lines[i + 1].TrimStart();
+            var heading = line.Length > 0 && CountWords(line) <= 8 && !".,;:!?)…".Contains(line[^1])
+                && next.Length > 0 && (char.IsUpper(next[0]) || char.IsDigit(next[0]));
+            result.Append(heading ? "\n\n" : "\n");
+        }
+
+        return result.ToString();
     }
 
     private static string Join(List<Unit> window)

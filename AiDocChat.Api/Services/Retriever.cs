@@ -54,23 +54,41 @@ public sealed partial class Retriever(AppDbContext db, EmbeddingClient embedding
     {
         var fused = new Dictionary<int, double>();
 
-        var keyword = Bm25(chunks, Tokenize(query).Distinct().ToArray());
+        var keyword = Bm25(chunks, Tokenize(query).Where(t => !StopWords.Contains(t)).Distinct().ToArray());
         Fuse(fused, keyword.Select((score, i) => (i, score)).Where(x => x.score > 0));
 
         double?[]? similarity = null;
+        var best = 0.0;
         if (queryVector is not null)
         {
             similarity = [.. chunks.Select(c => c.Vector is null ? (double?)null : EmbeddingClient.Dot(queryVector, c.Vector))];
             Fuse(fused, similarity.Select((score, i) => (i, score: score ?? double.MinValue)).Where(x => x.score > double.MinValue));
+            best = similarity.Max() ?? 0;
         }
+
+        // Vector search always returns something. A passage that shares no keyword with the question and is far less
+        // similar than the best one is noise: it would only cost prompt tokens and distract the model.
+        bool Relevant(int i) => keyword[i] > 0 || similarity?[i] is not { } s || s >= best * 0.8;
 
         return
         [
-            .. fused.OrderByDescending(x => x.Value)
+            .. fused.Where(x => Relevant(x.Key))
+                .OrderByDescending(x => x.Value)
                 .Take(topK)
                 .Select(x => new Hit(chunks[x.Key], x.Value, similarity?[x.Key])),
         ];
     }
+
+    private static readonly HashSet<string> StopWords =
+    [
+        .. """
+           the and or of to in on at for from by with about as is are was were be been do does did have has had what which
+           who whom whose when where why how can could should would will may might must me my we our you your he she it its
+           they them their this that these those there here not no if then than so too very just also into some any all each
+           и в във на за с със от до по при към че да не ли се си ще е са бе съм сме сте как какво какви каква кой коя кое кои
+           кога къде защо колко дали това този тази тези тя той то те ние вие аз ти ми ни ви му им го ги мога може могат трябва
+           """.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries),
+    ];
 
     internal static IndexedChunk Index(string documentId, string fileName, int index, int? page, string text, float[]? vector)
     {

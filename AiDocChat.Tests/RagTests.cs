@@ -28,8 +28,8 @@ public class RagTests
         var csv = TextChunker.Split([new Page(null, "name,price\napple,1\npear,2")], 200, 20);
         Assert.Equal("name,price\napple,1\npear,2", Assert.Single(csv).Text);
 
-        var pdf = TextChunker.Split([new Page(1, "The exam-\nple wraps\nacross lines.")], 200, 20);
-        Assert.Equal("The example wraps across lines.", Assert.Single(pdf).Text);
+        var pdf = TextChunker.Split([new Page(1, "2. Hybrid schedule\nThe exam-\nple wraps\nacross lines.")], 200, 20);
+        Assert.Equal("2. Hybrid schedule\n\nThe example wraps across lines.", Assert.Single(pdf).Text);
     }
 
     [Fact]
@@ -58,8 +58,9 @@ public class RagTests
             Retriever.Index("d", "a.txt", 1, null, "Money back within thirty days.", V(0, 1, 0)),
         };
 
-        var hits = Retriever.Rank(chunks, "Can I get a reimbursement?", V(0.1f, 0.9f, 0), topK: 1);
+        var hits = Retriever.Rank(chunks, "Can I get a reimbursement?", V(0.1f, 0.9f, 0), topK: 5);
 
+        // The unrelated passage shares no keyword and is far less similar, so it is dropped.
         Assert.Equal(1, Assert.Single(hits).Chunk.Index);
         Assert.True(hits[0].Similarity > 0.9);
     }

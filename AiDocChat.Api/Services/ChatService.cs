@@ -185,6 +185,9 @@ public sealed class ChatService(AppDbContext db, Retriever retriever, LlmClient 
         }
 
         context.Append("Question: ").Append(question);
+
+        // Repeated after the sources because smaller models follow the last instruction they read.
+        context.Append("\n\nAnswer in the same language as the question. Put the number of each source you use in square brackets, like [1], after the sentence it supports.");
         messages.Add(new("user", context.ToString()));
         return messages;
     }

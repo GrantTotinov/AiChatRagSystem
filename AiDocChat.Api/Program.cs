@@ -120,6 +120,4 @@ api.MapPost("/chat", IResult (ChatRequest request, ChatService chat, Cancellatio
     return TypedResults.ServerSentEvents(chat.AskAsync(request, ct));
 }).RequireRateLimiting("llm");
 
-app.MapFallbackToFile("index.html");
-
 app.Run();
