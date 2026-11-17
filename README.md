@@ -1,437 +1,158 @@
-# 🤖 AI Doc Chat - Intelligent Document Q&A System
+# AI Doc Chat
 
-<div align="center">
+[![CI](https://github.com/GrantTotinov/AiChatRagSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/GrantTotinov/AiChatRagSystem/actions/workflows/ci.yml)
+![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
-![React](https://img.shields.io/badge/React-19.2-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![TailwindCSS](https://img.shields.io/badge/Tailwind-4.1-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![RAG](https://img.shields.io/badge/RAG-System-FF6B6B?style=for-the-badge)
-![Ollama](https://img.shields.io/badge/Ollama-AI-000000?style=for-the-badge)
+**Ask questions about your own documents and get answers that cite the exact passage they came from.**
+Upload PDFs, Word files, Markdown, CSV or text, then chat with them. Every claim in an answer has a numbered mark; click it and the source passage opens beside the answer with your search terms highlighted.
 
-**A cutting-edge Retrieval-Augmented Generation (RAG) system that enables intelligent Q&A on your documents using state-of-the-art AI technologies**
+It runs fully on your machine with [Ollama](https://ollama.com), or with any OpenAI-compatible API such as [Groq](https://console.groq.com) for the answers.
 
-[Demo](#-demo) • [Features](#-features) • [Tech Stack](#-tech-stack) • [Getting Started](#-getting-started) • [Architecture](#-architecture)
+![An answer about a remote work policy, with source 1 open on the right and the matching words highlighted](docs/screenshots/answer-with-source.png)
 
-</div>
+## Features
 
----
+- **Answers with citations.** Answers stream in token by token and cite sources as `[1]`, `[2]`. Each source shows the file, the PDF page and how closely it matched.
+- **Hybrid search.** BM25 keyword ranking and embedding similarity are merged with reciprocal rank fusion, so exact names, codes and numbers are found as reliably as paraphrases.
+- **Conversations.** Chats are saved, follow-up questions keep their context, and you can stop an answer, ask again, copy it or export the conversation as Markdown.
+- **Choose what to search.** Tick documents in the library to limit a conversation to them, or search everything.
+- **Summaries and suggestions.** One click for a summary, key points, dates or amounts. The app also suggests questions each document can answer.
+- **Formats.** PDF (page-accurate citations), Word `.docx`, `.txt`, Markdown, CSV and JSON, up to 25 MB each, by drag and drop.
+- **Safe uploads.** Every file is checked with [UploadGuard](https://github.com/GrantTotinov/UploadGuard): the real type is detected from the bytes, and zip bombs, macros and PDF JavaScript are rejected. Duplicate files are recognised by their SHA-256 hash.
+- **Works when parts are missing.** Without Ollama it falls back to keyword search; without a language model it answers with the best matching passages.
+- **Interface.** Light and dark themes, English and Bulgarian, keyboard friendly, and a layout that works on phones.
 
-## 🎯 Overview
+| Suggested questions | Dark theme, one document in scope | Phone |
+|---|---|---|
+| ![Empty conversation with quick actions and questions suggested from the document](docs/screenshots/suggestions.png) | ![Dark theme answer about release notes with the source passage open](docs/screenshots/dark.png) | ![Phone layout with the source passage in a bottom sheet](docs/screenshots/mobile-source.png) |
 
-AI Doc Chat is a modern, production-ready **RAG (Retrieval-Augmented Generation)** application that allows users to upload documents and ask questions about their content using advanced AI models. The system intelligently retrieves relevant document sections and generates accurate, contextual answers.
+## How it works
 
-### 🎥 Demo
-
-Upload PDF or TXT documents and start chatting with your data instantly:
-
-- 📤 **Drag & Drop Upload** - Seamless document upload experience
-- 🔍 **Smart Search** - Vector similarity search for precise content retrieval
-- 💬 **Natural Q&A** - Ask questions in natural language, get intelligent answers
-- ⚡ **Real-time Processing** - Fast document chunking and embedding generation
-- 🎨 **Modern UI** - Beautiful glassmorphism design with smooth animations
-
-![firefox_TiQCHFmn7A](https://github.com/user-attachments/assets/49d88860-beb2-4cbc-bb31-93eb7293f8e7)
-
-
----
-
-## ✨ Features
-
-### Core Functionality
-
-- ✅ **Document Processing** - Supports PDF and TXT files with intelligent chunking
-- ✅ **Vector Embeddings** - Utilizes Ollama's `nomic-embed-text` model for semantic understanding
-- ✅ **Semantic Search** - Cosine similarity-based retrieval for relevant content matching
-- ✅ **AI-Powered Answers** - Groq API with Llama 3.1 8B for natural language responses
-- ✅ **Multi-Document Support** - Upload and query multiple documents independently
-- ✅ **Persistent Storage** - SQLite database for document and embedding storage
-
-### Technical Highlights
-
-- 🔐 **Clean Architecture** - Separation of concerns with Services, Controllers, Models, Data layers
-- 🚀 **High Performance** - Async/await patterns throughout, optimized for scalability
-- 📊 **RESTful API** - Well-structured endpoints with OpenAPI/Swagger documentation
-- 🎨 **Responsive Design** - Mobile-first approach with Tailwind CSS 4.1
-- ⚡ **Fast Compilation** - SWC for lightning-fast React builds
-- 🔄 **CORS Enabled** - Seamless frontend-backend communication
-
----
-
-## 🛠️ Tech Stack
-
-### Backend (ASP.NET Core)
-
-| Technology                                                       | Version | Purpose                                              |
-| ---------------------------------------------------------------- | ------- | ---------------------------------------------------- |
-| **[.NET](https://dotnet.microsoft.com/)**                        | 8.0     | Latest LTS framework for high-performance web APIs   |
-| **[Entity Framework Core](https://docs.microsoft.com/ef/core/)** | 8.0     | Modern ORM with async operations and LINQ support    |
-| **[SQLite](https://www.sqlite.org/)**                            | Latest  | Lightweight, embedded database for efficient storage |
-| **[iText7](https://itextpdf.com/)**                              | 9.0.7   | Professional PDF processing and text extraction      |
-| **[Newtonsoft.Json](https://www.newtonsoft.com/json)**           | 13.0.3  | High-performance JSON serialization                  |
-| **[Swagger/OpenAPI](https://swagger.io/)**                       | Latest  | API documentation and testing interface              |
-
-### Frontend (React + TypeScript)
-
-| Technology                                        | Version | Purpose                                                 |
-| ------------------------------------------------- | ------- | ------------------------------------------------------- |
-| **[React](https://react.dev/)**                   | 19.2    | Latest React with concurrent features and optimizations |
-| **[TypeScript](https://www.typescriptlang.org/)** | 5.9     | Type-safe JavaScript for robust code quality            |
-| **[Vite](https://vitejs.dev/)**                   | 7.2     | Next-generation frontend tooling with HMR               |
-| **[Tailwind CSS](https://tailwindcss.com/)**      | 4.1     | Utility-first CSS framework for modern design           |
-| **[SWC](https://swc.rs/)**                        | Latest  | Rust-based compiler for 20x faster builds               |
-| **[ESLint](https://eslint.org/)**                 | 9.39    | Code quality and consistency enforcement                |
-
-### AI/ML Stack
-
-| Service                          | Model                | Purpose                                        |
-| -------------------------------- | -------------------- | ---------------------------------------------- |
-| **[Ollama](https://ollama.ai/)** | nomic-embed-text     | Local embedding generation for semantic search |
-| **[Groq](https://groq.com/)**    | llama-3.1-8b-instant | Ultra-fast LLM inference for chat responses    |
-| **Vector Search**                | Cosine Similarity    | Efficient similarity matching algorithm        |
-| **RAG Pipeline**                 | Custom               | Context-aware question answering system        |
-
----
-
-## 🏗️ Architecture
-
-### System Design
-
-```
-┌─────────────────┐      HTTP/REST      ┌──────────────────┐
-│                 │ ◄─────────────────► │                  │
-│  React Frontend │                     │  ASP.NET Core    │
-│  (TypeScript)   │      JSON/API       │      API         │
-│                 │                     │                  │
-└─────────────────┘                     └──────────────────┘
-                                               │
-                                               ▼
-                         ┌─────────────────────────────────────┐
-                         │                                     │
-                         │     Application Services            │
-                         │  ┌──────────────────────────────┐  │
-                         │  │  DocumentService             │  │
-                         │  │  - PDF/TXT Processing        │  │
-                         │  │  - Chunking Strategy         │  │
-                         │  └──────────────────────────────┘  │
-                         │  ┌──────────────────────────────┐  │
-                         │  │  EmbeddingService            │  │
-                         │  │  - Ollama Integration        │  │
-                         │  │  - Vector Generation         │  │
-                         │  │  - Similarity Search         │  │
-                         │  └──────────────────────────────┘  │
-                         │  ┌──────────────────────────────┐  │
-                         │  │  ChatService                 │  │
-                         │  │  - RAG Pipeline              │  │
-                         │  │  - Groq API Integration      │  │
-                         │  │  - Context Building          │  │
-                         │  └──────────────────────────────┘  │
-                         │                                     │
-                         └─────────────────────────────────────┘
-                                               │
-                                               ▼
-                         ┌─────────────────────────────────────┐
-                         │                                     │
-                         │   Entity Framework Core + SQLite    │
-                         │                                     │
-                         │   Documents Table                   │
-                         │   DocumentChunks Table              │
-                         │   (with Vector Embeddings)          │
-                         │                                     │
-                         └─────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Upload
+        F[File] --> G[UploadGuard check] --> X[Extract text<br/>per PDF page] --> C[Sentence-aware chunks<br/>with overlap] --> E[Ollama embeddings<br/>batched] --> DB[(SQLite)]
+    end
+    subgraph Question
+        Q[Question + previous turn] --> K[BM25] & V[Vector similarity]
+        K & V --> R[Reciprocal rank fusion] --> P[Prompt with numbered sources] --> L[LLM, streamed over SSE] --> A[Answer with citations]
+    end
+    DB -. cached index .-> K & V
 ```
 
-### RAG Pipeline Flow
+1. **Ingest.** Text is extracted with [PdfPig](https://github.com/UglyToad/PdfPig) (one entry per page) or read from the Word XML directly. It is split into chunks of about 220 words that end on sentence boundaries and overlap by 40 words; chunks never cross a PDF page, so citations always have an exact page.
+2. **Embed.** Chunks are embedded with `nomic-embed-text` through Ollama's batch endpoint, using the model's `search_document:` and `search_query:` prefixes. Vectors are normalised and stored as float32 BLOBs, so similarity is a plain dot product.
+3. **Retrieve.** For each question the cached index of the selected documents is ranked twice, by BM25 and by vector similarity, and the two rankings are fused. Passages that share no keyword with the question and are much less similar than the best match are dropped.
+4. **Answer.** The top passages are numbered and sent with the conversation history to the model, which is told to answer only from them and cite them. Tokens are streamed to the browser as server-sent events. Stopping keeps the partial answer.
 
-1. **Document Ingestion**
-   - User uploads PDF/TXT file
-   - Document is extracted and split into semantic chunks
-   - Each chunk is sent to Ollama for embedding generation
-   - Chunks and embeddings stored in SQLite database
+## Quick start
 
-2. **Question Processing**
-   - User query is converted to embedding vector
-   - Cosine similarity calculated against all document chunks
-   - Top-K most relevant chunks retrieved
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Node.js 20.19+](https://nodejs.org).
 
-3. **Answer Generation**
-   - Retrieved chunks assembled into context
-   - Context + question sent to Groq's Llama 3.1 model
-   - AI generates contextual, accurate response
-   - Response delivered to user in real-time
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **[.NET SDK 8.0+](https://dotnet.microsoft.com/download)** - Backend runtime
-- **[Node.js 18+](https://nodejs.org/)** - Frontend development
-- **[Ollama](https://ollama.ai/)** - Local AI model runtime
-- **[Groq API Key](https://console.groq.com/)** - Free LLM access
-
-### Installation
-
-#### 1️⃣ Clone the Repository
+### 1. Embeddings (Ollama)
 
 ```bash
-git clone https://github.com/yourusername/AiChatRagSystem.git
-cd AiChatRagSystem
-```
-
-#### 2️⃣ Setup Ollama
-
-```bash
-# Install Ollama (if not already installed)
-# Visit https://ollama.ai/ for installation instructions
-
-# Pull the embedding model
 ollama pull nomic-embed-text
-
-# Start Ollama service (runs on http://localhost:11434)
-ollama serve
 ```
 
-#### 3️⃣ Configure Backend
+No Ollama? Run it in Docker: `docker run -d -p 11434:11434 -v ollama:/root/.ollama --name ollama ollama/ollama`, then `docker exec ollama ollama pull nomic-embed-text`. The app still works without it, using keyword search only.
+
+### 2. A language model, local or hosted
+
+Pick one and set it with [user secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets), which stay out of the repository:
 
 ```bash
 cd AiDocChat.Api
 
-# Update appsettings.json with your Groq API key
-# Get free API key from: https://console.groq.com/keys
+# Groq (free key from https://console.groq.com/keys), default model openai/gpt-oss-20b
+dotnet user-secrets set "Llm:ApiKey" "gsk_..."
+
+# or fully local with Ollama
+ollama pull qwen2.5:7b
+dotnet user-secrets set "Llm:BaseUrl" "http://localhost:11434/v1"
+dotnet user-secrets set "Llm:Model" "qwen2.5:7b"
 ```
 
-**appsettings.json:**
-
-```json
-{
-  "Groq": {
-    "ApiKey": "your-groq-api-key-here"
-  },
-  "Ollama": {
-    "BaseUrl": "http://localhost:11434"
-  }
-}
-```
-
-#### 4️⃣ Run Backend
+### 3. Run
 
 ```bash
-# Restore dependencies and run
-dotnet restore
-dotnet run
-
-# API will be available at: http://localhost:5261
-# Swagger UI: http://localhost:5261/swagger
-```
-
-#### 5️⃣ Setup Frontend
-
-```bash
-cd ../frontend
-
-# Install dependencies
+cd frontend
 npm install
+npm run build          # writes the app to AiDocChat.Api/wwwroot
 
-# Start development server
-npm run dev
-
-# Frontend will be available at: http://localhost:5173
+cd ../AiDocChat.Api
+dotnet run             # http://localhost:5261
 ```
 
-### 🎉 Usage
+Try it with the files in [`samples/`](samples). For frontend work, keep `dotnet run` going and start `npm run dev` in `frontend/`: Vite serves http://localhost:5173 with hot reload and proxies `/api` to the API.
 
-1. **Open** http://localhost:5173 in your browser
-2. **Upload** a PDF or TXT document
-3. **Select** the document from the list
-4. **Ask** questions about the document content
-5. **Receive** AI-generated answers based on document context
+## Configuration
 
----
+Settings live in [`appsettings.json`](AiDocChat.Api/appsettings.json) and can be overridden with user secrets or environment variables (`Llm__ApiKey`, `Rag__TopK`, ...). `GROQ_API_KEY` and the old `Groq:ApiKey` also work.
 
-## 📁 Project Structure
+| Setting | Default | Meaning |
+|---|---|---|
+| `Llm:BaseUrl` | `https://api.groq.com/openai/v1` | Any OpenAI-compatible endpoint: Groq, OpenAI, OpenRouter, Ollama (`http://localhost:11434/v1`) |
+| `Llm:Model` | `openai/gpt-oss-20b` | Chat model name at that endpoint |
+| `Llm:ApiKey` | empty | Not needed for a local endpoint |
+| `Embeddings:Model` | `nomic-embed-text` | Ollama embedding model. For questions in one language about documents in another, use `bge-m3` and clear both prefixes |
+| `Embeddings:DocumentPrefix`, `QueryPrefix` | `search_document: `, `search_query: ` | Task prefixes the nomic model was trained with |
+| `Rag:TopK` | `6` | Passages sent to the model per question |
+| `Rag:ChunkWords`, `Rag:OverlapWords` | `220`, `40` | Chunk size and overlap |
+| `Rag:HistoryMessages` | `6` | Earlier messages included for follow-up questions |
+| `Rag:MaxUploadBytes` | `26214400` | Upload limit per file (25 MB) |
 
-```
-AiChatRagSystem/
-├── AiDocChat.Api/                 # Backend ASP.NET Core API
-│   ├── Controllers/               # REST API endpoints
-│   │   ├── ChatController.cs      # Chat Q&A endpoints
-│   │   └── DocumentsController.cs # Document management
-│   ├── Services/                  # Business logic layer
-│   │   ├── ChatService.cs         # RAG + LLM integration
-│   │   ├── DocumentService.cs     # PDF/TXT processing
-│   │   └── EmbeddingService.cs    # Vector embeddings
-│   ├── Models/                    # Domain models
-│   │   └── Document.cs            # Document entity
-│   ├── Data/                      # Database context
-│   │   └── AppDbContext.cs        # EF Core DbContext
-│   ├── Program.cs                 # Application entry point
-│   └── appsettings.json           # Configuration
-│
-├── frontend/                      # React + TypeScript frontend
-│   ├── src/
-│   │   ├── App.tsx                # Main application component
-│   │   ├── main.tsx               # React entry point
-│   │   └── index.css              # Tailwind base styles
-│   ├── package.json               # NPM dependencies
-│   ├── vite.config.ts             # Vite configuration
-│   ├── tsconfig.json              # TypeScript configuration
-│   └── tailwind.config.js         # Tailwind setup
-│
-└── README.md                      # This file
-```
+Changing the embedding model only affects files added afterwards; re-add older files to re-embed them.
 
----
+## API
 
-## 🔧 API Endpoints
+The OpenAPI document is at `/openapi/v1.json` and an interactive reference at `/scalar` in development. [`AiDocChat.Api.http`](AiDocChat.Api/AiDocChat.Api.http) has ready-made requests.
 
-### Documents
-
-| Method | Endpoint                | Description                     |
-| ------ | ----------------------- | ------------------------------- |
-| `GET`  | `/api/documents`        | List all uploaded documents     |
-| `POST` | `/api/documents/upload` | Upload and process new document |
-
-### Chat
-
-| Method | Endpoint        | Description                 |
-| ------ | --------------- | --------------------------- |
-| `POST` | `/api/chat/ask` | Ask question about document |
-
-**Example Request:**
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Language model and embedding status |
+| `GET` | `/api/documents` | List documents |
+| `POST` | `/api/documents` | Upload files (multipart `files`) |
+| `DELETE` | `/api/documents/{id}` | Delete a document and its chunks |
+| `GET` | `/api/documents/{id}/suggestions` | Questions the document can answer |
+| `POST` | `/api/chat` | Ask a question; streams `meta`, `token`, `done` or `error` events |
+| `GET` | `/api/conversations` | List conversations |
+| `GET` | `/api/conversations/{id}` | A conversation with its messages and sources |
+| `DELETE` | `/api/conversations/{id}` | Delete a conversation |
 
 ```json
-POST /api/chat/ask
-{
-  "documentId": "abc123",
-  "question": "What is the main topic of this document?"
-}
+POST /api/chat
+{ "question": "What does the company pay for a home office?", "conversationId": null, "documentIds": [], "overview": false }
 ```
 
-**Example Response:**
+## Project structure
 
-```json
-{
-  "success": true,
-  "answer": "The main topic discusses artificial intelligence..."
-}
+```
+AiDocChat.Api/          ASP.NET Core 10 minimal API
+  Program.cs            Configuration and endpoints
+  Services/             TextExtractor, TextChunker, EmbeddingClient, Retriever, LlmClient, ChatService, DocumentService
+  Data/, Models/        EF Core SQLite context and entities
+AiDocChat.Tests/        xUnit tests for chunking, ranking and Word extraction
+frontend/               React 19, TypeScript, Tailwind CSS 4, Vite
+samples/                Example documents to try
 ```
 
----
+## Security notes
 
-## 🎨 UI Features
+- Uploads are validated by content, not by extension, before any parsing. XML in Word files is read with DTD processing disabled.
+- Document text is passed to the model as data, and the system prompt tells it to ignore instructions inside sources. Treat answers about untrusted documents with the usual care around prompt injection.
+- Question and suggestion endpoints are rate limited (30 requests per minute).
+- There is no authentication: run it locally or put it behind your own sign-in before exposing it.
 
-- **Glassmorphism Design** - Modern frosted glass aesthetic
-- **Gradient Animations** - Smooth color transitions
-- **Responsive Layout** - Works on all device sizes
-- **Loading States** - Clear feedback for async operations
-- **Error Handling** - User-friendly error messages
-- **Drag & Drop** - Intuitive file upload
-- **Dark Theme** - Eye-friendly dark color scheme
+## Development
 
----
-
-## 🔐 Security Considerations
-
-- ✅ CORS configured for secure cross-origin requests
-- ✅ API keys stored in configuration (not in code)
-- ✅ Input validation on all endpoints
-- ✅ Error handling without exposing sensitive info
-- ⚠️ **Production Note:** Add authentication/authorization before deployment
-
----
-
-## 🚀 Performance Optimizations
-
-- **Async Operations** - All I/O operations are async for better concurrency
-- **Connection Pooling** - HTTP client factory for efficient connections
-- **Chunking Strategy** - Optimal chunk size for embeddings
-- **Similarity Caching** - Efficient vector comparison algorithms
-- **SWC Compiler** - 20x faster than Babel for React builds
-- **Vite HMR** - Instant hot module replacement during development
-
----
-
-## 📚 Key Algorithms & Techniques
-
-### Document Chunking
-
-Documents are split into semantic chunks to maintain context while enabling efficient retrieval.
-
-### Vector Embeddings
-
-Each chunk is converted to a 768-dimensional vector using Ollama's `nomic-embed-text` model, capturing semantic meaning.
-
-### Cosine Similarity
-
-```csharp
-similarity = (A · B) / (||A|| × ||B||)
+```bash
+dotnet test                         # backend tests
+cd frontend && npm run lint         # ESLint
 ```
 
-Measures semantic similarity between query and document chunks.
+## License
 
-### RAG (Retrieval-Augmented Generation)
-
-Combines semantic search with LLM generation for accurate, contextual answers grounded in document content.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Areas for improvement:
-
-- [ ] Add support for more document formats (DOCX, PPTX)
-- [ ] Implement chat history
-- [ ] Add user authentication
-- [ ] Deploy vector database (Qdrant, Pinecone)
-- [ ] Add streaming responses
-- [ ] Implement multi-language support
-- [ ] Add document comparison features
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👨‍💻 Author
-
-**Your Name**
-
-- GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/yourprofile)
-- Portfolio: [yourportfolio.com](https://yourportfolio.com)
-
----
-
-## 🙏 Acknowledgments
-
-- **Ollama** - For providing free local AI inference
-- **Groq** - For ultra-fast LLM API access
-- **Microsoft** - For the excellent .NET platform
-- **React Team** - For the amazing React 19 features
-- **Tailwind Labs** - For the utility-first CSS framework
-
----
-
-## 📊 Project Stats
-
-- **Backend Lines of Code:** ~1,500+
-- **Frontend Lines of Code:** ~400+
-- **Technologies Used:** 15+
-- **API Endpoints:** 3
-- **Response Time:** < 2 seconds (average)
-- **Supported Documents:** PDF, TXT
-
----
-
-<div align="center">
-
-**⭐ If you find this project useful, please consider giving it a star! ⭐**
-
-Made with ❤️ using cutting-edge technologies
-
-</div>
+[MIT](LICENSE) © Grant Totinov

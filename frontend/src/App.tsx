@@ -1,408 +1,389 @@
-import { useState, useRef, useEffect } from 'react'
-import './App.css'
+import { Upload } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api, ApiError, streamChat, type ConversationSummary, type DocumentInfo, type Health, type Message, type Source } from './api'
+import { Chat, type AskOptions } from './components/Chat'
+import { ACCEPT, Library, type PendingUpload } from './components/Library'
+import { SourcePanel } from './components/SourcePanel'
+import { strings, type Lang } from './i18n'
 
-const API_URL = 'http://localhost:5261/api'
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
-interface Document {
-  id: string
-  fileName: string
-  uploadedAt: string
-  chunksCount: number
+// Storage can throw in private windows; preferences are a convenience, so failures are ignored.
+const stored = (key: string) => {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+const store = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* ignored */
+  }
 }
 
-export default function AiDocChat() {
-  const [documents, setDocuments] = useState<Document[]>([])
-  const [selectedDoc, setSelectedDoc] = useState('')
-  const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [asking, setAsking] = useState(false)
-  const [error, setError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+interface OpenSource {
+  messageId: Message['id']
+  source: Source
+  sources: Source[]
+  question: string
+}
+
+export default function App() {
+  const [lang, setLang] = useState<Lang>(() => {
+    const saved = stored('aidocchat.lang')
+    return saved === 'en' || saved === 'bg' ? saved : navigator.language.startsWith('bg') ? 'bg' : 'en'
+  })
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'))
+  const t = strings[lang]
+
+  const [documents, setDocuments] = useState<DocumentInfo[]>([])
+  const [uploads, setUploads] = useState<PendingUpload[]>([])
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [title, setTitle] = useState<string | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [scope, setScope] = useState<string[]>([])
+  const [streaming, setStreaming] = useState(false)
+  const [health, setHealth] = useState<Health | null>(null)
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [panel, setPanel] = useState<OpenSource | null>(null)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetchDocuments()
+    document.documentElement.dataset.theme = theme
+    store('aidocchat.theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    document.documentElement.lang = lang
+    store('aidocchat.lang', lang)
+  }, [lang])
+
+  useEffect(() => {
+    Promise.all([api.documents(), api.conversations(), api.health()])
+      .then(([docs, chats, status]) => {
+        setDocuments(docs)
+        setConversations(chats)
+        setHealth(status)
+      })
+      .catch(() => setToast(strings[lang].apiDown))
+    // Runs once on load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchDocuments = async () => {
-    try {
-      const response = await fetch(`${API_URL}/documents`)
-      const data = await response.json()
-      if (data.success) {
-        setDocuments(data.documents)
-      }
-    } catch (err) {
-      console.error('Error loading documents:', err)
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
+  // Suggested questions for the first document in scope, shown on an empty conversation.
+  const suggestFor = messages.length === 0 ? (scope[0] ?? documents[0]?.id) : undefined
+  const llmReady = health?.llm.configured ?? false
+  useEffect(() => {
+    if (!suggestFor || !llmReady) return
+    let current = true
+    api
+      .suggestions(suggestFor)
+      .then((s) => current && setSuggestions(s))
+      .catch(() => {})
+    return () => {
+      current = false
+      setSuggestions([])
     }
-  }
+  }, [suggestFor, llmReady])
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    setUploading(true)
-    setError('')
-
-    const formData = new FormData()
-    formData.append('file', file)
-
-    try {
-      const response = await fetch(`${API_URL}/documents/upload`, {
-        method: 'POST',
-        body: formData,
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        await fetchDocuments()
-        setSelectedDoc(data.documentId)
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ''
+  const upload = useCallback(
+    async (files: File[]) => {
+      for (const file of files) {
+        const key = crypto.randomUUID()
+        if (file.size > MAX_UPLOAD_BYTES) {
+          setUploads((u) => [...u, { key, name: file.name, error: t.formats }])
+          continue
         }
-      } else {
-        setError(data.error || 'Грешка при качване на файл')
+
+        setUploads((u) => [...u, { key, name: file.name }])
+        try {
+          const result = await api.upload(file)
+          if (result.document) {
+            const doc = result.document
+            setDocuments((d) => [doc, ...d.filter((x) => x.id !== doc.id)])
+            setUploads((u) => u.filter((x) => x.key !== key))
+            setToast(result.duplicate ? t.duplicate(file.name) : t.added(file.name))
+          } else {
+            setUploads((u) => u.map((x) => (x.key === key ? { ...x, error: result.error ?? '' } : x)))
+          }
+        } catch (e) {
+          const error = e instanceof ApiError ? e.message : t.apiDown
+          setUploads((u) => u.map((x) => (x.key === key ? { ...x, error } : x)))
+        }
       }
-    } catch (err) {
-      setError('Не може да се свърже със сървъра')
-    } finally {
-      setUploading(false)
-    }
-  }
+      api.health().then(setHealth).catch(() => {})
+    },
+    [t],
+  )
 
-  const handleAsk = async () => {
-    if (!question.trim() || !selectedDoc) return
-
-    setAsking(true)
-    setError('')
-    setAnswer('')
-
-    try {
-      const response = await fetch(`${API_URL}/chat/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documentId: selectedDoc,
-          question: question.trim(),
-        }),
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        setAnswer(data.answer)
-      } else {
-        setError(data.error || 'Грешка при обработка на въпроса')
-      }
-    } catch (err) {
-      setError('Не може да се свърже със сървъра')
-    } finally {
-      setAsking(false)
-    }
-  }
-
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  // Drop files anywhere on the window.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files')
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return
       e.preventDefault()
-      handleAsk()
+      setDragging(true)
     }
+    const leave = (e: DragEvent) => {
+      if (!e.relatedTarget) setDragging(false)
+    }
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      setDragging(false)
+      upload([...(e.dataTransfer?.files ?? [])])
+    }
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+    }
+  }, [upload])
+
+  const ask = useCallback(
+    async (question: string, options: AskOptions = {}) => {
+      if (streaming || !question.trim()) return
+      const assistantId = `a-${Date.now()}`
+      const patch = (fn: (m: Message) => Message) => setMessages((ms) => ms.map((m) => (m.id === assistantId ? fn(m) : m)))
+
+      setMessages((ms) => [
+        ...(options.regenerate
+          ? ms.slice(0, ms.findLastIndex((m) => m.role === 'assistant'))
+          : [...ms, { id: `q-${Date.now()}`, role: 'user' as const, content: question }]),
+        { id: assistantId, role: 'assistant', content: '', pending: true },
+      ])
+      setPanel(null)
+      setStreaming(true)
+
+      // Tokens arrive faster than the screen refreshes; render them once per frame.
+      let buffer = ''
+      let frame = 0
+      const flush = () => {
+        frame = 0
+        const text = buffer
+        buffer = ''
+        if (text) patch((m) => ({ ...m, content: m.content + text }))
+      }
+      const flushNow = () => {
+        if (frame) cancelAnimationFrame(frame)
+        flush()
+      }
+
+      const controller = new AbortController()
+      abort.current = controller
+      try {
+        await streamChat(
+          { question, conversationId: activeId, documentIds: scope, regenerate: options.regenerate, overview: options.overview },
+          {
+            meta: (d) => {
+              setActiveId(d.conversationId)
+              setTitle(d.title)
+              patch((m) => ({ ...m, sources: d.sources }))
+            },
+            token: (text) => {
+              buffer += text
+              if (!frame) frame = requestAnimationFrame(flush)
+            },
+            done: (d) => {
+              flushNow()
+              patch((m) => ({ ...m, pending: false, elapsedMs: d.elapsedMs }))
+            },
+            error: (message) => {
+              flushNow()
+              patch((m) => ({ ...m, pending: false, error: message }))
+            },
+          },
+          controller.signal,
+        )
+      } catch (e) {
+        flushNow()
+        const stopped = controller.signal.aborted
+        const error = stopped
+          ? undefined
+          : e instanceof ApiError
+            ? e.status === 429
+              ? t.rateLimited
+              : e.message
+            : t.apiDown
+        patch((m) => ({ ...m, pending: false, stopped, error }))
+      } finally {
+        patch((m) => (m.pending ? { ...m, pending: false } : m))
+        abort.current = null
+        setStreaming(false)
+        api.conversations().then(setConversations).catch(() => {})
+      }
+    },
+    [activeId, scope, streaming, t],
+  )
+
+  const startNew = () => {
+    abort.current?.abort()
+    setActiveId(null)
+    setTitle(null)
+    setMessages([])
+    setPanel(null)
+    setLibraryOpen(false)
+  }
+
+  const open = async (id: string) => {
+    abort.current?.abort()
+    try {
+      const c = await api.conversation(id)
+      setActiveId(c.id)
+      setTitle(c.title)
+      setMessages(c.messages)
+      setScope(c.documentIds.filter((d) => documents.some((x) => x.id === d)))
+      setPanel(null)
+      setLibraryOpen(false)
+    } catch {
+      setToast(t.apiDown)
+    }
+  }
+
+  const deleteDocument = async (doc: DocumentInfo) => {
+    if (!window.confirm(t.confirmDeleteDocument(doc.fileName))) return
+    await api.deleteDocument(doc.id).catch(() => {})
+    setDocuments((d) => d.filter((x) => x.id !== doc.id))
+    setScope((s) => s.filter((x) => x !== doc.id))
+  }
+
+  const deleteConversation = async (id: string) => {
+    await api.deleteConversation(id).catch(() => {})
+    setConversations((c) => c.filter((x) => x.id !== id))
+    if (id === activeId) startNew()
+  }
+
+  const exportChat = () => {
+    const lines = [`# ${title ?? t.newConversation}`]
+    for (const m of messages) {
+      if (m.role === 'user') lines.push(`## ${m.content}`)
+      else {
+        lines.push(m.content)
+        if (m.sources?.length) {
+          lines.push(`**${t.sources}**`, m.sources.map((s) => `${s.n}. ${s.fileName}${s.page != null ? `, ${t.page(s.page)}` : ''}`).join('\n'))
+        }
+      }
+    }
+    const url = URL.createObjectURL(new Blob([lines.join('\n\n')], { type: 'text/markdown' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${(title ?? 'conversation').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 60)}.md`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const cite = (message: Message, source: Source) => {
+    const index = messages.indexOf(message)
+    const question = messages.slice(0, index).findLast((m) => m.role === 'user')?.content ?? ''
+    setPanel((p) =>
+      p?.messageId === message.id && p.source.n === source.n ? null : { messageId: message.id, source, sources: message.sources ?? [], question },
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
-              <svg
-                className="w-6 h-6 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-4xl font-bold text-white">AI Doc Chat</h1>
-          </div>
-          <p className="text-purple-200">
-            Задайте въпроси към вашите документи с AI асистент
-          </p>
-        </div>
+    <div className="flex h-full overflow-hidden">
+      {libraryOpen && <div className="fixed inset-0 z-40 bg-ink/30 lg:hidden" onClick={() => setLibraryOpen(false)} aria-hidden />}
+      <aside
+        aria-label={t.library}
+        className={`fixed inset-y-0 left-0 z-50 w-[300px] max-w-[85vw] border-r border-rule bg-paper transition-transform duration-200 lg:static lg:translate-x-0 ${
+          libraryOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <Library
+          t={t}
+          documents={documents}
+          uploads={uploads}
+          scope={scope}
+          conversations={conversations}
+          activeId={activeId}
+          health={health}
+          theme={theme}
+          onUpload={upload}
+          onDismissUpload={(key) => setUploads((u) => u.filter((x) => x.key !== key))}
+          onToggleScope={(id) => setScope((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))}
+          onClearScope={() => setScope([])}
+          onDeleteDocument={deleteDocument}
+          onOpen={open}
+          onNew={startNew}
+          onDeleteConversation={deleteConversation}
+          onToggleTheme={() => setTheme((x) => (x === 'dark' ? 'light' : 'dark'))}
+          onToggleLang={() => setLang((x) => (x === 'bg' ? 'en' : 'bg'))}
+        />
+      </aside>
 
-        {/* Card 1: Качи документ */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-6">
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-            Качи документ
-          </h2>
-
-          <label className="block">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.txt"
-              onChange={handleFileUpload}
-              disabled={uploading}
-              className="hidden"
-            />
-            <div
-              className={`cursor-pointer border-2 border-dashed rounded-xl p-8 text-center transition-all ${
-                uploading
-                  ? 'border-purple-400 bg-purple-500/20'
-                  : 'border-purple-300/50 hover:border-purple-400 hover:bg-white/5'
-              }`}
-            >
-              {uploading ? (
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-8 h-8 border-4 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-purple-200 font-medium">Качване...</p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-2">
-                  <svg
-                    className="w-10 h-10 text-purple-300"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 4v16m8-8H4"
-                    />
-                  </svg>
-                  <p className="text-purple-100 font-medium">Избери файл</p>
-                  <p className="text-purple-300 text-sm">PDF или TXT</p>
-                </div>
-              )}
-            </div>
-          </label>
-        </div>
-
-        {/* Card 2: Документи */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-6">
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
-            Документи ({documents.length})
-          </h2>
-
-          {documents.length === 0 ? (
-            <p className="text-purple-300 text-center py-8">
-              Няма качени документи
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {documents.map((doc) => (
-                <button
-                  key={doc.id}
-                  onClick={() => setSelectedDoc(doc.id)}
-                  className={`w-full text-left p-4 rounded-xl transition-all ${
-                    selectedDoc === doc.id
-                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
-                      : 'bg-white/5 text-purple-100 hover:bg-white/10'
-                  }`}
-                >
-                  <p className="font-medium truncate">{doc.fileName}</p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      selectedDoc === doc.id
-                        ? 'text-white/80'
-                        : 'text-purple-300'
-                    }`}
-                  >
-                    {doc.chunksCount} части •{' '}
-                    {new Date(doc.uploadedAt).toLocaleDateString('bg-BG')}
-                  </p>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Card 3: Чат с документ */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 overflow-hidden">
-          <div className="p-6 border-b border-white/20">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                />
-              </svg>
-              Чат с документ
-            </h2>
-            {selectedDoc && (
-              <p className="text-purple-200 text-sm mt-1">
-                Избран: {documents.find((d) => d.id === selectedDoc)?.fileName}
-              </p>
-            )}
-          </div>
-
-          <div className="p-6 min-h-[300px] max-h-[400px] overflow-y-auto">
-            {!selectedDoc ? (
-              <div className="h-full flex items-center justify-center py-20">
-                <div className="text-center">
-                  <svg
-                    className="w-16 h-16 text-purple-300 mx-auto mb-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                    />
-                  </svg>
-                  <p className="text-purple-200 text-lg">
-                    Изберете документ, за да започнете
-                  </p>
-                </div>
-              </div>
-            ) : answer ? (
-              <div className="bg-gradient-to-br from-white/10 to-white/5 rounded-xl p-6 border border-white/20">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <svg
-                      className="w-5 h-5 text-white"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-green-300 font-semibold mb-2">
-                      AI Отговор
-                    </p>
-                    <p className="text-white leading-relaxed whitespace-pre-wrap">
-                      {answer}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="h-full flex items-center justify-center py-20">
-                <p className="text-purple-300 text-center">
-                  Задайте въпрос относно документа
-                </p>
-              </div>
-            )}
-
-            {error && (
-              <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-4 mt-4">
-                <div className="flex items-start gap-3">
-                  <svg
-                    className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <p className="text-red-200">{error}</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="p-6 border-t border-white/20 bg-white/5">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Задайте въпрос към документа..."
-                disabled={!selectedDoc || asking}
-                className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-              <button
-                onClick={handleAsk}
-                disabled={!selectedDoc || !question.trim() || asking}
-                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-xl font-medium transition-all hover:shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
-              >
-                {asking ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Изпращане</span>
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                      />
-                    </svg>
-                    <span>Изпрати</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+      <div className="flex min-w-0 flex-1 bg-sheet">
+        <Chat
+          t={t}
+          title={title}
+          messages={messages}
+          documents={documents}
+          scope={scope}
+          streaming={streaming}
+          suggestions={suggestions}
+          activeSource={panel ? { messageId: panel.messageId, n: panel.source.n } : null}
+          onAsk={ask}
+          onStop={() => abort.current?.abort()}
+          onCite={cite}
+          onChooseFiles={() => fileInput.current?.click()}
+          onExport={exportChat}
+          onOpenLibrary={() => setLibraryOpen(true)}
+        />
+        {panel && (
+          <SourcePanel
+            source={panel.source}
+            sources={panel.sources}
+            question={panel.question}
+            t={t}
+            onSelect={(source) => setPanel((p) => p && { ...p, source })}
+            onClose={() => setPanel(null)}
+          />
+        )}
       </div>
+
+      <input
+        ref={fileInput}
+        type="file"
+        multiple
+        accept={ACCEPT}
+        className="hidden"
+        onChange={(e) => {
+          upload([...(e.target.files ?? [])])
+          e.target.value = ''
+        }}
+      />
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-[60] grid place-items-center bg-pen/10 backdrop-blur-[2px]">
+          <div className="rounded-2xl border-2 border-dashed border-pen bg-sheet px-10 py-8 text-center shadow-xl">
+            <Upload className="mx-auto text-pen" size={26} />
+            <p className="mt-3 font-serif text-[20px]">{t.dropHere}</p>
+            <p className="mt-1 text-[13px] text-ink-soft">{t.formats}</p>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div role="status" className="fixed bottom-28 left-1/2 z-[70] -translate-x-1/2 rounded-lg bg-ink px-4 py-2 text-[14px] text-sheet shadow-lg">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
